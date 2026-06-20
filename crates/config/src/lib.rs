@@ -1223,8 +1223,16 @@ include "vhosts/*.kdl"
         .unwrap();
 
         let config = Config::from_file(&main_config).unwrap();
-        assert_eq!(config.routes.len(), 2, "Should merge routes from both files");
-        assert_eq!(config.upstreams.len(), 2, "Should merge upstreams from both files");
+        assert_eq!(
+            config.routes.len(),
+            2,
+            "Should merge routes from both files"
+        );
+        assert_eq!(
+            config.upstreams.len(),
+            2,
+            "Should merge upstreams from both files"
+        );
         assert!(config.routes.iter().any(|r| r.id == "api"));
         assert!(config.routes.iter().any(|r| r.id == "web"));
         assert!(config.upstreams.contains_key("api-backend"));
@@ -1343,6 +1351,68 @@ include "vhosts/*.kdl"
         assert!(
             err.to_string().contains("Duplicate upstream ID 'backend'"),
             "Should reject duplicate upstream IDs, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_multi_file_cross_file_duplicate_route_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create two separate include directories to ensure detection across file boundaries
+        let dir_a = dir.path().join("a");
+        let dir_b = dir.path().join("b");
+        std::fs::create_dir(&dir_a).unwrap();
+        std::fs::create_dir(&dir_b).unwrap();
+
+        std::fs::write(
+            dir_a.join("first.kdl"),
+            r#"
+routes {
+    route "shared-id" {
+        match { path-prefix "/first" }
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir_b.join("second.kdl"),
+            r#"
+routes {
+    route "shared-id" {
+        match { path-prefix "/second" }
+    }
+}
+"#,
+        )
+        .unwrap();
+
+        let main_config = dir.path().join("zentinel.kdl");
+        std::fs::write(
+            &main_config,
+            r#"
+schema-version "1.0"
+system {
+    worker-threads 4
+}
+listeners {
+    listener "http" {
+        address "0.0.0.0:8080"
+        protocol "http"
+    }
+}
+include "a/*.kdl"
+include "b/*.kdl"
+"#,
+        )
+        .unwrap();
+
+        let err = Config::from_file(&main_config).unwrap_err();
+        assert!(
+            err.to_string().contains("Duplicate route ID 'shared-id'"),
+            "Should reject duplicate route IDs across separate include boundaries, got: {}",
             err
         );
     }

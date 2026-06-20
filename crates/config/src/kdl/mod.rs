@@ -39,8 +39,8 @@ use zentinel_common::limits::Limits;
 
 pub use crate::kdl::circuitbreaker_helper::parse_circuit_breaker_faildefault;
 use crate::observability::ObservabilityConfig;
-use crate::waf::WafConfig;
 use crate::routes::RouteConfig;
+use crate::waf::WafConfig;
 use crate::{AgentConfig, Config, CURRENT_SCHEMA_VERSION};
 
 // ============================================================================
@@ -76,6 +76,12 @@ pub fn parse_kdl_document(doc: kdl::KdlDocument) -> Result<Config> {
             }
             // Accept both "system" (preferred) and "server" (deprecated)
             "system" => {
+                if server.is_some() {
+                    warn!(
+                        "Duplicate 'system' block found. Singleton blocks use last-wins semantics; \
+                         the previous 'system' block will be overridden."
+                    );
+                }
                 server = Some(parse_server_config(node)?);
                 trace!("Parsed system configuration");
             }
@@ -84,11 +90,29 @@ pub fn parse_kdl_document(doc: kdl::KdlDocument) -> Result<Config> {
                     "The 'server' block is deprecated. Please use 'system' instead. \
                      This will be removed in a future version."
                 );
+                if server.is_some() {
+                    warn!(
+                        "Duplicate 'server'/'system' block found. Singleton blocks use last-wins semantics; \
+                         the previous block will be overridden."
+                    );
+                }
                 server = Some(parse_server_config(node)?);
                 trace!("Parsed server configuration (deprecated)");
             }
             "listeners" => {
-                listeners.extend(parse_listeners(node)?);
+                let new_listeners = parse_listeners(node)?;
+                for listener in new_listeners {
+                    if listeners
+                        .iter()
+                        .any(|l: &crate::server::ListenerConfig| l.id == listener.id)
+                    {
+                        return Err(anyhow::anyhow!(
+                            "Duplicate listener ID '{}' found. Each listener ID must be unique across all config files.",
+                            listener.id
+                        ));
+                    }
+                    listeners.push(listener);
+                }
                 trace!(count = listeners.len(), "Parsed listeners");
             }
             "routes" => {
@@ -144,6 +168,12 @@ pub fn parse_kdl_document(doc: kdl::KdlDocument) -> Result<Config> {
                 trace!(count = agents.len(), "Parsed agents");
             }
             "waf" => {
+                if waf.is_some() {
+                    warn!(
+                        "Duplicate 'waf' block found. Singleton blocks use last-wins semantics; \
+                         the previous 'waf' block will be overridden."
+                    );
+                }
                 waf = Some(parse_waf_config(node)?);
                 trace!("Parsed WAF configuration");
             }
